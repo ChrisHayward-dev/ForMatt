@@ -152,7 +152,9 @@ void setup() {
 
 void loop() {
   static uint state = 0;
-  bool validState;
+  uint32_t startTime;
+  uint16_t curSwitch;
+  bool validState = false;
   digitalWrite(REDLED,HIGH);
   for (state = 0; state < NSTATES; state++) {
     validState = false;
@@ -191,7 +193,13 @@ void loop() {
     for (int k = 0; k < NSTACK; k++) {
       Serial.println("Fill");
       set16(RELAYALL_MASK & ~ARMRELAY_MASK, ~(FILLRELAY_MASK | PUMPRELAY_MASK));               //start fill w/ purge closed
-      delay(FILLTIME);                                                                           //fill delay
+      startTime = millis();
+      curSwitch = PCF.read16()&(SWALL_MASK & ~SWAUTO_MASK);
+      while(millis()-startTime < FILLTIME) {
+        if(curSwitch != (PCF.read16()&(SWALL_MASK & ~SWAUTO_MASK))) break;
+        yield();
+      }
+      if(curSwitch != (PCF.read16()&(SWALL_MASK & ~SWAUTO_MASK))) break;                                                                         //fill delay
       Serial.println("Purge");
       set16(RELAYALL_MASK & ~ARMRELAY_MASK, ~(FILLRELAY_MASK | PUMPRELAY_MASK | PURGERELAY_MASK)); //open purge
       delay(PURGETIME);                                                                           //purge delay
@@ -207,6 +215,7 @@ void loop() {
       set16(RELAYALL_MASK & ~ARMRELAY_MASK, ~0);
       Serial.println("--Finished");
       delay(DEADTIME);
+      if(PCF.read(SWAUTO) == HIGH) break;       //end sequence early if swauto is set off
     }
     Serial.println("Finished Stack");
   }
