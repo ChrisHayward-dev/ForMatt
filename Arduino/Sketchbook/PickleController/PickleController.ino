@@ -3,11 +3,11 @@
 */
 #include <PCF8575.h>
 
-#define NSTACK 5
-#define FILLTIME  15000
-#define PURGETIME 500
+#define NSTACK 20
+#define FILLTIME  1000L
+#define PURGETIME 1000
 #define FIRETIME  500
-#define DEADTIME  2000
+#define DEADTIME 1000
 
 PCF8575 PCF(0x20);
 #define REDLED 13
@@ -114,15 +114,15 @@ void setup() {
   pinMode(REDLED, OUTPUT);
   pinMode(GREENLED, OUTPUT);
   Serial.begin(9600);
-  while (!Serial) {
-    if ((millis() & 0x100) == 0x100) {
-      digitalWrite(REDLED, !digitalRead(REDLED));
-    }
-    yield();
-    if(millis()-startTime > 10000) break;
-  }
+//  while (!Serial) {
+//    if ((millis() & 0x100) == 0x100) {
+//      digitalWrite(REDLED, !digitalRead(REDLED));
+//    }
+//    yield();
+//    if(millis()-startTime > 10000) break;
+//  }
 
-  delay(1000);
+  delay(100);
   digitalWrite(GREENLED, HIGH);
   digitalWrite(REDLED, LOW);
   Serial.println("Starting Pickel Controller");
@@ -139,7 +139,7 @@ void setup() {
     errorStop(2);
   }
   Serial.println("PCF connected");
-
+  PCF.write16(0xFFFF);  //set all off
   // process the state table for later use
   /* The value entries need to be inverted since activated is LOW not high */
   for (uint k = 0; k < NSTATES; k++) {
@@ -183,42 +183,46 @@ void loop() {
   digitalWrite(GREENLED,HIGH);
   if (validState && (state == NSTATES)) {
     Serial.println("Auto Mode");
-    set16(RELAYALL_MASK & ~ARMRELAY_MASK, PURGERELAY_MASK);
-    delay(250);
+    Serial.println("PURGE");
+    set16(RELAYALL_MASK & ~ARMRELAY_MASK, ~(PURGERELAY_MASK|ARMLED_MASK|AUTOLED_MASK));
+    delay(PURGETIME);
+    Serial.println("Wait");
+    set16(RELAYALL_MASK & ~ARMRELAY_MASK & ~AUTOLED_MASK,~0);
+    delay(DEADTIME);
     if (PCF.read(SWARM) == LOW) {
       PCF.write(FIRERELAY, LOW);
-      delay(100);
+      delay(FIRETIME);
       PCF.write(FIRERELAY, HIGH);
     }
-
+    delay(DEADTIME);
     for (int k = 0; k < NSTACK; k++) {
       Serial.println("Fill");
-      set16(RELAYALL_MASK & ~ARMRELAY_MASK, ~(FILLRELAY_MASK | PUMPRELAY_MASK));               //start fill w/ purge closed
+      set16(RELAYALL_MASK & ~ARMRELAY_MASK& ~AUTOLED_MASK, ~(FILLRELAY_MASK | PUMPRELAY_MASK | ARMLED_MASK));               //start fill w/ purge closed
       startTime = millis();
-      curSwitch = PCF.read16()&(SWALL_MASK & ~SWAUTO_MASK);
-      while(millis()-startTime < FILLTIME) {
-        if(curSwitch != (PCF.read16()&(SWALL_MASK & ~SWAUTO_MASK))) break;
+      while((millis()-startTime) < FILLTIME) {
+        if(PCF.read(SWARM) == HIGH) break;
         yield();
       }
-      if(curSwitch != (PCF.read16()&(SWALL_MASK & ~SWAUTO_MASK))) break;                                                                         //fill delay
+      if(PCF.read(SWARM) == HIGH) break;                                                                     //fill delay
       Serial.println("Purge");
-      set16(RELAYALL_MASK & ~ARMRELAY_MASK, ~(FILLRELAY_MASK | PUMPRELAY_MASK | PURGERELAY_MASK)); //open purge
+      set16(RELAYALL_MASK & ~ARMRELAY_MASK& ~AUTOLED_MASK, ~(FILLRELAY_MASK | PUMPRELAY_MASK | PURGERELAY_MASK|ARMLED_MASK)); //open purge
       delay(PURGETIME);                                                                           //purge delay
       Serial.println("Wait");
-      set16(RELAYALL_MASK & ~ARMRELAY_MASK, ~0);                                             //all closed
+      set16(RELAYALL_MASK & ~ARMRELAY_MASK& ~AUTOLED_MASK, ~0);                                             //all closed
       delay(DEADTIME);                                                                            //close delay
       if (PCF.read(SWARM) == LOW) {
         Serial.println("Fire");
-        set16(RELAYALL_MASK & ~ARMRELAY_MASK, ~FIRERELAY_MASK);
+        set16(RELAYALL_MASK & ~ARMRELAY_MASK& ~AUTOLED_MASK, ~FIRERELAY_MASK);
       }
       Serial.println("Wait");
       delay(FIRETIME);
-      set16(RELAYALL_MASK & ~ARMRELAY_MASK, ~0);
+      set16(RELAYALL_MASK & ~ARMRELAY_MASK& ~AUTOLED_MASK, ~0);
       Serial.println("--Finished");
       delay(DEADTIME);
       if(PCF.read(SWAUTO) == HIGH) break;       //end sequence early if swauto is set off
     }
     Serial.println("Finished Stack");
+    PCF.write(AUTOLED,HIGH);
   }
   digitalWrite(GREENLED,LOW);
   yield();
