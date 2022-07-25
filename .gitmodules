@@ -1,0 +1,3 @@
+[submodule "Arduino/Sketchbook/libraries/AnalogReadFast"]
+	path = Arduino/Sketchbook/libraries/AnalogReadFast
+	url = git@github.com:avandalen/avdweb_AnalogReadFast.git

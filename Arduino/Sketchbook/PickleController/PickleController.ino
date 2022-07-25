@@ -118,10 +118,10 @@ void set16(uint16_t mask, uint16_t value) {
   uint16_t currentValue = PCF.read16();
   uint16_t setValue = SWALL_MASK | (~mask & currentValue) | (mask & value);
   PCF.write16(setValue);
-  Serial.print("Set Relays from ");
-  Serial.print(currentValue & RELAYALL_MASK, HEX);
-  Serial.print(" To ");
-  Serial.println((setValue & RELAYALL_MASK), HEX);
+  //  Serial.print("Set Relays from ");
+  //  Serial.print(currentValue & RELAYALL_MASK, HEX);
+  //  Serial.print(" To ");
+  //  Serial.println((setValue & RELAYALL_MASK), HEX);
 }
 bool readsw(uint16_t mask, uint16_t value) {
   uint16_t switches = PCF.readButton16(SWALL_MASK);
@@ -141,6 +141,33 @@ void safeswitch(int sw, int led) {
   }
   PCF.write(led, HIGH);
 }
+
+
+bool fire() {
+  uint32_t startTime = millis();
+  int32_t   val = 0;
+  int       count = 0;
+  if (PCF.read(SWARM) == HIGH) return (true);
+  Serial.println("Firing!");
+  set16(RELAYALL_MASK & ~ARMRELAY_MASK & ~AUTOLED_MASK, ~FIRERELAY_MASK);
+  delay(20);
+  while ((millis() - startTime) < FIRETIME) {
+    val = max(analogReadFast(FIREDETECT), val);
+    count++;
+    if (val > 50) {
+      set16(RELAYALL_MASK & ~ARMRELAY_MASK & ~AUTOLED_MASK, ~0);
+      digitalWrite(REDLED, HIGH);
+      digitalWrite(GREENLED, HIGH);
+      delay(100);
+      digitalWrite(REDLED, LOW);
+      return (true);
+      break;
+    }
+  }
+  set16(RELAYALL_MASK & ~ARMRELAY_MASK & ~AUTOLED_MASK, ~0);
+  Serial.println("Misfire!");
+  return (false);
+}
 void setup() {
   uint32_t startTime = millis();
   pinMode(REDLED, OUTPUT);
@@ -151,6 +178,7 @@ void setup() {
   pinMode(SWPLUS, INPUT_PULLUP);
   pinMode(TRIGOUT, OUTPUT);
   pinMode(PCF_INTERRUPT, INPUT_PULLUP);
+  pinMode(SPARK, INPUT_PULLDOWN);
 
   digitalWrite(REDLED, HIGH);
   Serial.begin(9600);
@@ -192,13 +220,6 @@ void setup() {
     display.display();
     delay(5000);
   }
-  // // process the state table for later use
-  // /* The value entries need to be inverted since activated is LOW not high */
-  // for (uint k = 0; k < NSTATES; k++) {
-  //   m[k].swvalue = (~m[k].swvalue) & m[k].swmask;
-  //   m[k].relayvalue = (~m[k].relayvalue) & m[k].relaymask;
-  // };
-  // Serial.println("Processed state table");
   safeswitch(SWARM, ARMLED);
   safeswitch(SWAUTO, AUTOLED);
   attachInterrupt(digitalPinToInterrupt(PCF_INTERRUPT),switchChange,LOW);  // setup the switch detect interrupt
