@@ -62,8 +62,8 @@
 #define PUMPRELAY_MASK (1 << PUMPRELAY)
 #define FIRERELAY_MASK (1 << FIRERELAY)
 
-#define SWALL_MASK 0x00FF
-#define SWALL_OFF  0x00FF
+#define SWALL_MASK 0x003F
+#define SWALL_OFF  0x003F
 #define RELAYALL_MASK 0xFF00
 #define RELAYALL_OFF  0xFF00
 #define RELAYCONTPL_MASK (RELAYALL_MASK & ~ARMLED_MASK & ~AUTOLED_MASK)
@@ -152,7 +152,7 @@ bool fire() {
   set16(RELAYALL_MASK & ~ARMRELAY_MASK & ~AUTOLED_MASK, ~FIRERELAY_MASK);
   delay(20);
   while ((millis() - startTime) < FIRETIME) {
-    val = max(analogReadFast(FIREDETECT), val);
+    val = max(analogRead(SPARK), val);
     count++;
     if (val > 50) {
       set16(RELAYALL_MASK & ~ARMRELAY_MASK & ~AUTOLED_MASK, ~0);
@@ -222,7 +222,7 @@ void setup() {
   }
   safeswitch(SWARM, ARMLED);
   safeswitch(SWAUTO, AUTOLED);
-  attachInterrupt(digitalPinToInterrupt(PCF_INTERRUPT),switchChange,LOW);  // setup the switch detect interrupt
+  attachInterrupt(digitalPinToInterrupt(PCF_INTERRUPT),switchChange,FALLING);  // setup the switch detect interrupt
   digitalWrite(GREENLED, HIGH);
   digitalWrite(REDLED, LOW);
 }
