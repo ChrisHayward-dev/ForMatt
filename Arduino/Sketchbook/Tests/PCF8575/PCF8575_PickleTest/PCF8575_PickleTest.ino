@@ -30,31 +30,23 @@ void setup()
 
 void loop()
 {
+  static int pin = 0;
   uint32_t ctime = millis();
-  //Serial.println("HLT");
-  while ((millis() - ctime) < 1000 && Serial.available() == 0 ) yield();
-  if (Serial.available() > 0) {
-    switch (Serial.read())
-    {
-      case 'H': doHigh(); break;
-      case 'L': doLow(); break;
-      case 'T': doToggle(); break;
-    }
-  }
   uint16_t x = PCF.read16();
   Serial.print("Read ");
   printHex(x);
+  delay(1000);
+  pin = (++pin)%8 + 8;
+  PCF.write(pin,LOW);
+  delay(500);
+  PCF.write(pin,HIGH);
+  delay(500);
 }
 
 
 void doHigh()
 {
- 
-  //PCF.write(P17, HIGH);
 
-  int x = PCF.read16();
-  Serial.print("Read ");
-  printHex(x);
 }
 
 

@@ -6,74 +6,85 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 /* Pickle options */
-#define USE_CONSOLE 1
+#define USE_CONSOLE 0
 
-#define NSTACK 5
-#define FILLTIME 15000
-#define PURGETIME 500
-#define FIRETIME 500
-#define DEADTIME 2000
+#define NSTACK          5
+#define FILLTIME        15000
+#define PURGETIME       500
+#define FIRETIME        500
+#define DEADTIME        2000
+#define MAX_FILLDELAY   15000
+#define MIN_PURGEDELAY  500
+#define MAXPURGE        20000
 
 // Arduino pin definitions
-#define SWUP 5
-#define SWDOWN 6
-#define GREENLED 8
-#define SWPLUS 9
-#define SWMINUS 10
-#define TRIGOUT 11
+#define SWUP          5
+#define SWDOWN        6
+#define GREENLED      8
+#define SWPLUS        9
+#define SWMINUS       10
+#define TRIGOUT       11
 #define PCF_INTERRUPT 12
-#define REDLED 13
-#define SPARK A2
-#define PHOTO A1
+#define REDLED        13
+#define SPARK         A2
+#define PHOTO         A1
 
 // PCF pin defintions
-#define SWARM 0
-#define SWAUTO 1
-#define SWSEQ 2
-#define SWFILL 3
-#define SWPURGE 4
-#define SWFIRE 5
-#define SWAIRFILL 6
-#define SWAIRPURGE 7
+#define SWARM         0
+#define SWAUTO        1
+#define SWSEQ         2
+#define SWFILL        3
+#define SWPURGE       4
+#define SWFIRE        5
+#define SWAIRFILL     6
+#define SWAIRPURGE    7
 
-#define ARMLED 8
-#define AUTOLED 9
-#define ARMRELAY 10
-#define FILLRELAY 11
-#define PURGERELAY 12
-#define PUMPRELAY 13
-#define FIRERELAY 14
-#define VALVERELAY 15
+#define ARMLED        8
+#define AUTOLED       9
+#define ARMRELAY      10
+#define FILLRELAY     11
+#define PURGERELAY    12
+#define PUMPRELAY     13
+#define FIRERELAY     14
+#define VALVERELAY    15
 
-#define SWARM_MASK (1 << SWARM)
-#define SWAUTO_MASK (1 << SWAUTO)
-#define SWSEQ_MASK (1 << SWSEQ)
-#define SWFILL_MASK (1 << SWFILL)
-#define SWPURGE_MASK (1 << SWPURGE)
-#define SWFIRE_MASK (1 << SWFIRE)
+#define SWARM_MASK      (1 << SWARM)
+#define SWAUTO_MASK     (1 << SWAUTO)
+#define SWSEQ_MASK      (1 << SWSEQ)
+#define SWFILL_MASK     (1 << SWFILL)
+#define SWPURGE_MASK    (1 << SWPURGE)
+#define SWFIRE_MASK     (1 << SWFIRE)
 #define SWAIRPURGE_MASK (1 << SWAIRPURGE)
-#define SWAIRFILL_MASK (1 << SWAIRFILL)
+#define SWAIRFILL_MASK  (1 << SWAIRFILL)
 
-#define ARMLED_MASK (1 << ARMLED)
-#define AUTOLED_MASK (1 << AUTOLED)
-#define ARMRELAY_MASK (1 << ARMRELAY)
-#define FILLRELAY_MASK (1 << FILLRELAY)
+#define ARMLED_MASK     (1 << ARMLED)
+#define AUTOLED_MASK    (1 << AUTOLED)
+#define ARMRELAY_MASK   (1 << ARMRELAY)
+#define FILLRELAY_MASK  (1 << FILLRELAY)
 #define PURGERELAY_MASK (1 << PURGERELAY)
-#define PUMPRELAY_MASK (1 << PUMPRELAY)
-#define FIRERELAY_MASK (1 << FIRERELAY)
+#define PUMPRELAY_MASK  (1 << PUMPRELAY)
+#define FIRERELAY_MASK  (1 << FIRERELAY)
+#define VALVERELAY_MASK (1 << VALVERELAY)
 
-#define SWALL_MASK 0x00FF
-#define SWALL_OFF  0x00FF
+#define SWALL_MASK      0x00FF
+#define SWALL_OFF       0x00FF
 #define SWBUTTONS_MASK  (SWFILL_MASK|SWPURGE_MASK|SWFIRE_MASK|SWSEQ_MASK|SWAIRPURGE_MASK|SWAIRFILL_MASK)
-#define RELAYALL_MASK 0xFF00
-#define RELAYALL_OFF  0xFF00
-#define RELAYCONTPL_MASK (RELAYALL_MASK & ~ARMLED_MASK & ~AUTOLED_MASK)
+#define RELAYALL_MASK   0xFF00
+#define RELAYALL_OFF    0xFF00
+#define RELAYCONTROL_MASK (RELAYALL_MASK & ~ARMLED_MASK & ~ARMRELAY_MASK)
+
+#define SET_CONTROLRELAY(v)   set16(RELAYCONTROL_MASK,RELAYCONTROL_MASK & ~(v) & ~AUTOLED_MASK)
+#define SET_CONTROLRELAYOFF   set16(RELAYCONTROL_MASK,RELAYCONTROL_MASK);
+#define SW(v)                 (SWBUTTONS_MASK & ~(v))
+
+#define OLED(v) {display.clearDisplay();display.setCursor(0,0);display.println(v);display.display();}
+#define OLEDP(v,w){display.clearDisplay();display.setCursor(0,0);display.print(v);display.println(w);display.display();}
 
 // Library definitions
-#define SCREEN_WIDTH 128     // OLED display width, in pixels
-#define SCREEN_HEIGHT 32     // OLED display height, in pixels
-#define OLED_RESET 4         // Reset pin # (or -1 if sharing Arduino reset pin)
-#define SCREEN_ADDRESS 0x3C  ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
+#define SCREEN_WIDTH    128     // OLED display width, in pixels
+#define SCREEN_HEIGHT   32     // OLED display height, in pixels
+#define OLED_RESET      -1         // Reset pin # (or -1 if sharing Arduino reset pin)
+#define SCREEN_ADDRESS  0x3C  ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 PCF8575 PCF(0x20);
 
@@ -169,6 +180,18 @@ bool fire() {
   Serial.println("Misfire!");
   return (false);
 }
+enum astate {IDLE, INIT, PREPURGE, NEXT, FILL, PURGE, READY, FIRE};
+astate autoState = IDLE;
+uint16_t  stackLimit = 5;
+uint16_t  num2stack  = 5;
+uint16_t  nextDelay  = 1000;
+uint16_t  fillDelay  = 2000;
+uint16_t  purgeDelay = 1000;
+uint16_t  fillpurgeDelay = 1000;
+uint16_t  readyDelay  = 1000;
+uint16_t  fireDelay  = 1000;
+
+
 void setup() {
   uint32_t startTime = millis();
   pinMode(REDLED, OUTPUT);
@@ -219,7 +242,6 @@ void setup() {
     display.setTextColor(SSD1306_WHITE);
     display.println("Pickle");
     display.display();
-    delay(5000);
   }
   safeswitch(SWARM, ARMLED);
   safeswitch(SWAUTO, AUTOLED);
@@ -233,160 +255,305 @@ pState primaryState = PROG;
 
 void loop() {
   uint16_t  switches = SWALL_OFF;
-  uint16_t  buttons;
-  display.clear();
+  uint16_t  toggles;
+  static uint16_t  prevToggles = SWARM_MASK | SWAUTO_MASK;
+  static uint16_t  buttons;
+  static uint16_t prevSw = SWARM_MASK | SWAUTO_MASK;
   if (swChange) {
     delay(10);
     swChange = false;
     switches = PCF.readButton16(SWALL_MASK);
     Serial.print("Switch Change:");
     Serial.println(switches, HEX);
-    switch (switches & (SWARM_MASK | SWAUTO_MASK)) {
-      case (SWARM_MASK | SWAUTO_MASK):
-        Serial.println("All off");
-        set16(RELAYALL_MASK, RELAYALL_MASK);
-        primaryState = PROG;
-        break;
-      case SWARM_MASK:
-        Serial.println("Auto on");
-        set16(RELAYALL_MASK, RELAYALL_MASK);
-        primaryState = STANDBY;
-        break;
-      case SWAUTO_MASK:
-        Serial.println("Armed");
-        set16(RELAYALL_MASK, RELAYALL_MASK & ~ARMRELAY_MASK & ~ARMLED_MASK);
-        primaryState = MANUAL;
-        break;
-      case 0:
-        Serial.println("Armed in Auto");
-        set16(RELAYALL_MASK, RELAYALL_MASK & ~(ARMRELAY_MASK | ARMLED_MASK | AUTOLED_MASK));
-        primaryState = AUTO;
-        break;
+    toggles = switches & (SWARM_MASK | SWAUTO_MASK);
+    if (toggles != prevToggles) {
+      prevToggles = toggles;
+      display.clearDisplay();
+      switch (toggles) {
+        case (SWARM_MASK | SWAUTO_MASK):
+          Serial.println("All off");
+          set16(RELAYALL_MASK, RELAYALL_MASK);
+          primaryState = PROG;
+          autoState = IDLE;
+          OLED("Program");
+          break;
+        case SWARM_MASK:
+          Serial.println("Auto on");
+          set16(RELAYALL_MASK, RELAYALL_MASK );
+          primaryState = STANDBY;
+          autoState = IDLE;
+          OLED("Standby");
+          break;
+        case SWAUTO_MASK:
+          Serial.println("Armed");
+          set16(RELAYALL_MASK, RELAYALL_MASK & ~ARMRELAY_MASK & ~ARMLED_MASK);
+          primaryState = MANUAL;
+          OLED("Rdy Manual");
+          autoState = IDLE;
+          break;
+        case 0:
+          Serial.println("Armed in Auto");
+          set16(RELAYALL_MASK, RELAYALL_MASK & ~(ARMRELAY_MASK | ARMLED_MASK ));
+          primaryState = AUTO;
+          OLED("Rdy Auto");
+          break;
+      }
     }
     buttons = switches & SWBUTTONS_MASK;
     Serial.print("Buttons:");
-    Serial.println(buttons,HEX);
+    Serial.println(buttons, HEX);
     switch (primaryState) {
-    case PROG:
-      break;
-    case STANDBY:
-      break;
-    case MANUAL:
-      switch (buttons) {
-        case SWBUTTONS_MASK:
-        Serial.println("No buttons pressed");
+      case PROG:
+        programSettings(buttons);
         break;
-        case SWBUTTONS_MASK & ~SWFILL_MASK:
-        Serial.println("Filling");
-        display.println("FILL");
+      case STANDBY:
         break;
-        case SWBUTTONS_MASK & ~SWPURGE_MASK:
-        Serial.println("Purging");
-        display.println("PURGE");
+      case MANUAL:
+        manualSettings(buttons);
         break;
-        case SWBUTTONS_MASK & ~SWFIRE_MASK:
-        Serial.println("Firing");
-        display.println("FIRE");
+      case AUTO:
+        autoSettings(buttons);
         break;
-        case SWBUTTONS_MASK & ~SWSEQ_MASK:
-        Serial.println("Auto Seq");
-        display.println("SEQ");
-        break;
-        case SWBUTTONS_MASK & ~SWAIRFILL_MASK:
-        Serial.println("Air Fill");
-        display.println("Air Fill");
-        break;
-        case SWBUTTONS_MASK & ~SWAIRPURGE_MASK:
-        Serial.println("Air Purge");
-        display.println("Air Purge");
-        break;
-        case SWBUTTONS_MASK & ~(SWFILL_MASK | SWPURGE_MASK):
-        Serial.println("Fill & purge");
-        display.println("Fill+Pur");
-        break;
-        case SWBUTTONS_MASK & ~(SWAIRFILL_MASK | SWAIRPURGE_MASK):
-        Serial.println("Air fill & purge");
-        display.println("Air FP");
-        break;
-        default:
-        Serial.println("Unknown state");
-        display.println("Invalid");
-      }
-      break;
+    }
+  }
+  switch (primaryState) {
     case AUTO:
+      autoProcess();
+      break;
+    case PROG:
+      programSettings(buttons);
       break;
   }
-  display.display();
+  yield();
 }
 
-// static uint state = 0;
-// uint32_t startTime;
-// uint16_t curSwitch;
-// bool validState = false;
-// digitalWrite(REDLED,HIGH);
-// for (state = 0; state < NSTATES; state++) {
-//   validState = false;
-//   Serial.print("\tChecking: ");
-//   Serial.print(m[state].swmask, HEX);
-//   Serial.print(" for ");
-//   Serial.println(m[state].swvalue, HEX);
-//   if (readsw(m[state].swmask, m[state].swvalue)) {
-//     Serial.print("State: ");
-//     Serial.println(state);
-//     Serial.print("Relay Mask: ");
-//     Serial.println(m[state].relaymask, HEX);
-//     Serial.print("Relay Set:  ");
-//     Serial.println(m[state].relayvalue, HEX);
-//     set16(m[state].relaymask, m[state].relayvalue);
-//     validState = true;
-//   }
-// }
-// digitalWrite(REDLED,LOW);
-// /* if we are in auto and sequencing has been started
-//    then initialize with a purge/fire cycle and then
-//    commence fill purge fire cycles until we either have
-//    a different switch state or have NSTACK fires
-// */
-// digitalWrite(GREENLED,HIGH);
-// if (validState && (state == NSTATES)) {
-//   Serial.println("Auto Mode");
-//   set16(RELAYALL_MASK & ~ARMRELAY_MASK, PURGERELAY_MASK);
-//   delay(250);
-//   if (PCF.read(SWARM) == LOW) {
-//     PCF.write(FIRERELAY, LOW);
-//     delay(100);
-//     PCF.write(FIRERELAY, HIGH);
-//   }
+void programSettings(uint16_t buttons) {
+  uint16_t prevButtons;
+  static uint32_t sTime;
+  static uint16_t reqFillDelay = 0;
+  static uint16_t prevButton = 0;
+  if(reqFillDelay == 0) {
+    reqFillDelay = fillpurgeDelay + fillDelay;
+  }
+  switch (buttons) {
+    case SW(0):
+      sTime = millis();
+      if (prevButton != buttons) {
+        if (reqFillDelay > MAX_FILLDELAY) {
+          fillpurgeDelay = (reqFillDelay - MAX_FILLDELAY) + MIN_PURGEDELAY;
+          fillDelay  = MAX_FILLDELAY;
+        } else {
+          fillDelay = reqFillDelay - MIN_PURGEDELAY;
+          fillpurgeDelay = MIN_PURGEDELAY;
+        }
+        OLED("Prog Set");
+      }
+      break;
+    case SW(SWFILL_MASK):   // increase Fill time (never more than 150 ml though)
+      if ((millis() - sTime) > 500) {
+        sTime = millis();
+        reqFillDelay += 500;
+        OLEDP("FILL:", reqFillDelay);
+      }
+      break;
+    case SW(SWAIRFILL_MASK):  // decrease Fill time
+      if ((millis() - sTime) > 500) {
+        sTime = millis();
+        reqFillDelay -= 500;
+        if ( reqFillDelay < MIN_PURGEDELAY ) {
+          reqFillDelay = MIN_PURGEDELAY;
+        }
+        OLEDP("FILL:", reqFillDelay);
+      }
+      break;
+    case SW(SWPURGE_MASK):
+      if((millis() - sTime) > 500) {
+        sTime = millis();
+        stackLimit++;
+        OLEDP("Stack:",stackLimit);
+      }
+      break;
+    case SW(SWAIRPURGE_MASK):
+      if((millis()-sTime) > 500) {
+        sTime = millis();
+        stackLimit--;
+        if(stackLimit <=0) stackLimit = 1;
+        OLEDP("Stack:",stackLimit);
+      }
+      break;
+  }
+  prevButton = buttons;
+}
+void autoSettings(uint16_t buttons) {
+  switch (buttons) {
+    case SW(0):
+      break;
+    case SW(SWSEQ_MASK):
+      if (autoState == IDLE) {
+        autoState = INIT;
+        num2stack = stackLimit;
+        Serial.println("Init Seq");
+      } else {
+        autoState = IDLE;
+        SET_CONTROLRELAYOFF;
+        Serial.println("Cancel Seq");
+        OLED("Ready");
+      }
+      break;
+    case SW(SWFIRE_MASK):
+      if (autoState == IDLE) {
+        autoState = INIT;
+        OLED("A Single");
+        num2stack = 1;
+      } else {
+        autoState = IDLE;
+        SET_CONTROLRELAYOFF;
+        Serial.println("Cancel Seq");
+        OLED("Ready");
+      }
+      break;
+    default:
+      Serial.println("Unknown state");
+      OLED("Ready");
+      autoState = IDLE;
+      SET_CONTROLRELAYOFF;
+      break;
+  }
+}
 
-//   for (int k = 0; k < NSTACK; k++) {
-//     Serial.println("Fill");
-//     set16(RELAYALL_MASK & ~ARMRELAY_MASK, ~(FILLRELAY_MASK | PUMPRELAY_MASK));               //start fill w/ purge closed
-//     startTime = millis();
-//     curSwitch = PCF.read16()&(SWALL_MASK & ~SWAUTO_MASK);
-//     while(millis()-startTime < FILLTIME) {
-//       if(curSwitch != (PCF.read16()&(SWALL_MASK & ~SWAUTO_MASK))) break;
-//       yield();
-//     }
-//     if(curSwitch != (PCF.read16()&(SWALL_MASK & ~SWAUTO_MASK))) break;                                                                         //fill delay
-//     Serial.println("Purge");
-//     set16(RELAYALL_MASK & ~ARMRELAY_MASK, ~(FILLRELAY_MASK | PUMPRELAY_MASK | PURGERELAY_MASK)); //open purge
-//     delay(PURGETIME);                                                                           //purge delay
-//     Serial.println("Wait");
-//     set16(RELAYALL_MASK & ~ARMRELAY_MASK, ~0);                                             //all closed
-//     delay(DEADTIME);                                                                            //close delay
-//     if (PCF.read(SWARM) == LOW) {
-//       Serial.println("Fire");
-//       set16(RELAYALL_MASK & ~ARMRELAY_MASK, ~FIRERELAY_MASK);
-//     }
-//     Serial.println("Wait");
-//     delay(FIRETIME);
-//     set16(RELAYALL_MASK & ~ARMRELAY_MASK, ~0);
-//     Serial.println("--Finished");
-//     delay(DEADTIME);
-//     if(PCF.read(SWAUTO) == HIGH) break;       //end sequence early if swauto is set off
-//   }
-//   Serial.println("Finished Stack");
-// }
-// digitalWrite(GREENLED,LOW);
-yield();
+void autoProcess() {
+  static uint32_t sTime = 0;
+  static uint16_t nStacked = 0;
+  static astate prevState;
+  prevState = autoState;
+  switch (autoState) {
+    case IDLE:
+      sTime = millis();
+      nStacked = 0;
+      display.setCursor(0, 0);
+      display.clearDisplay();
+      OLED("A Ready");
+      break;
+    case INIT:
+      autoState = PREPURGE;
+      sTime = millis();
+      display.setCursor(0, 0);
+      display.clearDisplay();
+      OLED("A PrePurge");
+      SET_CONTROLRELAY(PURGERELAY_MASK);
+      break;
+    case PREPURGE:
+      if ((millis() - sTime) > purgeDelay) {
+        autoState = NEXT;
+        sTime = millis();
+        OLED("A Next");
+        SET_CONTROLRELAYOFF;
+      }
+      break;
+    case NEXT:
+      if ((millis() - sTime) > nextDelay) {
+        autoState = FILL;
+        nStacked++;
+        sTime = millis();
+        OLED("A Fill");
+        SET_CONTROLRELAY(FILLRELAY_MASK | PUMPRELAY_MASK | VALVERELAY_MASK);
+      }
+      break;
+    case FILL:
+      if ((millis() - sTime) > fillDelay) {
+        autoState = PURGE;
+        sTime = millis();
+        OLED("A Purge");
+        SET_CONTROLRELAY(FILLRELAY_MASK | PUMPRELAY_MASK | VALVERELAY_MASK | PURGERELAY_MASK);
+      }
+      break;
+    case PURGE:
+      if ((millis() - sTime) > fillpurgeDelay) {
+        autoState = READY;
+        sTime = millis();
+        OLED("A Armed");
+        SET_CONTROLRELAYOFF;
+      }
+      break;
+    case READY:
+      if ((millis() - sTime) > readyDelay) {
+        autoState = FIRE;
+        sTime = millis();
+        OLED("A Fire");
+        SET_CONTROLRELAY(FIRERELAY_MASK);
+      }
+      break;
+    case FIRE:
+      if ((millis() - sTime) > fireDelay) {
+        sTime = millis();
+        SET_CONTROLRELAYOFF;
+        if (nStacked >= num2stack) {
+          autoState = IDLE;
+          OLED("A Ready");
+        } else {
+          display.clearDisplay();
+          display.setCursor(0, 0);
+          display.print(nStacked);
+          display.print(" of ");
+          display.println(num2stack);
+          display.display();
+          autoState = NEXT;
+        }
+      }
+      break;
+  }
+}
+
+void manualSettings(uint16_t buttons) {
+  display.setCursor(0, 0);
+  display.clearDisplay();
+  switch (buttons) {
+    case SW(0):
+      Serial.println("No buttons pressed");
+      OLED("Manual");
+      SET_CONTROLRELAYOFF;
+      break;
+    case SW(SWFILL_MASK):
+      Serial.println("Filling");
+      OLED("FILL");
+      SET_CONTROLRELAY(VALVERELAY_MASK | FILLRELAY_MASK | PUMPRELAY_MASK);
+      break;
+    case SW(SWPURGE_MASK):
+      Serial.println("Purging");
+      OLED("PURGE");
+      SET_CONTROLRELAY(PURGERELAY_MASK);
+      break;
+    case SW(SWFIRE_MASK):
+      Serial.println("Firing");
+      OLED("FIRE");
+      SET_CONTROLRELAY(FIRERELAY_MASK);
+      break;
+    case SW(SWSEQ_MASK):
+      Serial.println("Auto Seq");
+      OLED("SEQ");
+      break;
+    case SW(SWAIRFILL_MASK):
+      Serial.println("Air Fill");
+      OLED("Air Fill");
+      SET_CONTROLRELAY(FILLRELAY_MASK | PUMPRELAY_MASK);
+      break;
+    case SW(SWAIRPURGE_MASK):
+      Serial.println("Air Purge");
+      OLED("Air Purge");
+      SET_CONTROLRELAY(FILLRELAY_MASK | PUMPRELAY_MASK | PURGERELAY_MASK);
+      break;
+    case SW(SWFILL_MASK | SWPURGE_MASK):
+      Serial.println("Fill & purge");
+      OLED("Fill+Pur");
+      SET_CONTROLRELAY(VALVERELAY_MASK | FILLRELAY_MASK | PUMPRELAY_MASK | PURGERELAY_MASK);
+      break;
+    case SW(SWAIRFILL_MASK | SWAIRPURGE_MASK):
+      Serial.println("Air fill & purge");
+      OLED("Air FP");
+      SET_CONTROLRELAY(PURGERELAY_MASK | FILLRELAY_MASK | PUMPRELAY_MASK);
+      break;
+    default:
+      Serial.println("Unknown state");
+      OLED("Invalid");
+  }
 }
