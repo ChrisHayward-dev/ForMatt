@@ -6,7 +6,11 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 /* Pickle options */
-#define USE_CONSOLE 0
+#define USE_CONSOLE   0       //If 1 will pause to allow a console to be connected
+#define USE_FIRESENSE 1       //if 1 will use fire sense (optical and spark sense) to get trigger output time
+
+#define SPARKLEVEL      50
+#define PHOTOLEVEL      50
 
 #define NSTACK          5
 #define FILLTIME        15000
@@ -16,6 +20,7 @@
 #define MAX_FILLDELAY   15000
 #define MIN_PURGEDELAY  500
 #define MAXPURGE        20000
+#define FIREDELAY       1000
 
 // Arduino pin definitions
 #define SWUP          5
@@ -88,22 +93,16 @@
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 PCF8575 PCF(0x20);
 
-
-bool dummySetting();
-
-struct {
-  uint16_t swmask;    // mask of switches to consider
-  uint16_t swvalue;   // value of switches to match
-  bool (*routine)();  // routine to fire upon this switch setting
-} m[] = {
-  SWALL_MASK, 0, dummySetting  //all off - initialize to all relays off
-};
-
-#define NSTATES (sizeof(m) / (sizeof(m[0])))
-
-bool dummySetting() {
-  return (true);
-}
+enum astate {IDLE, INIT, PREPURGE, NEXT, FILL, PURGE, READY, FIRE, MISFIRE};
+astate autoState = IDLE;
+uint16_t  stackLimit = 5;
+uint16_t  num2stack  = 5;
+uint16_t  nextDelay  = 1000;
+uint16_t  fillDelay  = 2000;
+uint16_t  purgeDelay = 1000;
+uint16_t  fillpurgeDelay = 1000;
+uint16_t  readyDelay  = 1000;
+uint16_t  fireDelay  = FIREDELAY;
 
 volatile bool swChange = false;
 void switchChange() {
@@ -154,42 +153,47 @@ void safeswitch(int sw, int led) {
   PCF.write(led, HIGH);
 }
 
-
+/* fire roouture returns TRUE if fire was successful, FALSE if FIRE has not yet been sensed*/
 bool fire() {
   uint32_t startTime = millis();
-  int32_t   val = 0;
+  int16_t   valSpark = 0;
+  int16_t   valPhoto = 0;
   int       count = 0;
+  bool      rtn = false;
+  bool      gotSpark = false;
+  bool      gotPhoto = false;
   if (PCF.read(SWARM) == HIGH) return (true);
   Serial.println("Firing!");
-  set16(RELAYALL_MASK & ~ARMRELAY_MASK & ~AUTOLED_MASK, ~FIRERELAY_MASK);
-  delay(20);
-  while ((millis() - startTime) < FIRETIME) {
-    val = max(analogRead(SPARK), val);
+  SET_CONTROLRELAY(FIRERELAY_MASK);
+  delay(20);    //delay long enough for initial pulse to decay
+  while ((millis() - startTime) < fireDelay) {
+    valSpark = max(analogRead(SPARK), valSpark);
+    valPhoto = max(analogRead(PHOTO), valPhoto);
     count++;
-    if (val > 50) {
-      set16(RELAYALL_MASK & ~ARMRELAY_MASK & ~AUTOLED_MASK, ~0);
+    if (valSpark > 50) {         //Spark was detected (probably)
+      SET_CONTROLRELAYOFF;
       digitalWrite(REDLED, HIGH);
       digitalWrite(GREENLED, HIGH);
+      digitalWrite(TRIGOUT, LOW);
       delay(100);
+      digitalWrite(TRIGOUT, HIGH);
       digitalWrite(REDLED, LOW);
-      return (true);
+      rtn = true;
       break;
     }
   }
-  set16(RELAYALL_MASK & ~ARMRELAY_MASK & ~AUTOLED_MASK, ~0);
-  Serial.println("Misfire!");
-  return (false);
+  SET_CONTROLRELAYOFF;
+  if (!rtn) {
+    Serial.println("Misfire!");
+  } else {
+    Serial.println("Fire Detected!");
+  }
+  Serial.print("Count: "); Serial.println(count);
+  Serial.print("Spark: "); Serial.println(valSpark);
+  Serial.print("Photo: "); Serial.println(valPhoto);
+  return (rtn);
 }
-enum astate {IDLE, INIT, PREPURGE, NEXT, FILL, PURGE, READY, FIRE};
-astate autoState = IDLE;
-uint16_t  stackLimit = 5;
-uint16_t  num2stack  = 5;
-uint16_t  nextDelay  = 1000;
-uint16_t  fillDelay  = 2000;
-uint16_t  purgeDelay = 1000;
-uint16_t  fillpurgeDelay = 1000;
-uint16_t  readyDelay  = 1000;
-uint16_t  fireDelay  = 1000;
+
 
 
 void setup() {
@@ -203,6 +207,7 @@ void setup() {
   pinMode(TRIGOUT, OUTPUT);
   pinMode(PCF_INTERRUPT, INPUT_PULLUP);
   pinMode(SPARK, INPUT_PULLDOWN);
+  pinMode(PHOTO, INPUT);
 
   digitalWrite(REDLED, HIGH);
   Serial.begin(9600);
@@ -217,9 +222,8 @@ void setup() {
 #endif
   Serial.println("Starting Pickel Controller");
   Serial.println(__FILE__);
-  Serial.print("Found ");
-  Serial.print(NSTATES);
-  Serial.println(" states");
+  Serial.println(__DATE__);
+  Serial.println(__TIME__);
 
   if (!PCF.begin()) {  // setup the PCF I2C port expander
     Serial.println("Unable to init PCF");
@@ -245,6 +249,11 @@ void setup() {
   }
   safeswitch(SWARM, ARMLED);
   safeswitch(SWAUTO, AUTOLED);
+  Serial.println("Starting Switch Interrupt");
+  Serial.println(__FILE__);
+  Serial.println(__DATE__);
+  Serial.println(__TIME__);
+
   attachInterrupt(digitalPinToInterrupt(PCF_INTERRUPT), switchChange, FALLING); // setup the switch detect interrupt
   digitalWrite(GREENLED, HIGH);
   digitalWrite(REDLED, LOW);
@@ -268,6 +277,7 @@ void loop() {
     toggles = switches & (SWARM_MASK | SWAUTO_MASK);
     if (toggles != prevToggles) {
       prevToggles = toggles;
+      digitalWrite(TRIGOUT, HIGH);  //clear the trigger out just in case it got left on
       display.clearDisplay();
       switch (toggles) {
         case (SWARM_MASK | SWAUTO_MASK):
@@ -332,7 +342,7 @@ void programSettings(uint16_t buttons) {
   static uint32_t sTime;
   static uint16_t reqFillDelay = 0;
   static uint16_t prevButton = 0;
-  if(reqFillDelay == 0) {
+  if (reqFillDelay == 0) {
     reqFillDelay = fillpurgeDelay + fillDelay;
   }
   switch (buttons) {
@@ -367,18 +377,18 @@ void programSettings(uint16_t buttons) {
       }
       break;
     case SW(SWPURGE_MASK):
-      if((millis() - sTime) > 500) {
+      if ((millis() - sTime) > 500) {
         sTime = millis();
         stackLimit++;
-        OLEDP("Stack:",stackLimit);
+        OLEDP("Stack:", stackLimit);
       }
       break;
     case SW(SWAIRPURGE_MASK):
-      if((millis()-sTime) > 500) {
+      if ((millis() - sTime) > 500) {
         sTime = millis();
         stackLimit--;
-        if(stackLimit <=0) stackLimit = 1;
-        OLEDP("Stack:",stackLimit);
+        if (stackLimit <= 0) stackLimit = 1;
+        OLEDP("Stack:", stackLimit);
       }
       break;
   }
@@ -480,7 +490,16 @@ void autoProcess() {
         autoState = FIRE;
         sTime = millis();
         OLED("A Fire");
+#if USE_FIRESENSE == 0
         SET_CONTROLRELAY(FIRERELAY_MASK);
+#else
+        if (!fire()) {
+          OLED("MisFire");
+          Serial.println("MisFire!");
+          autoState = MISFIRE;
+          SET_CONTROLRELAYOFF;
+        }
+#endif
       }
       break;
     case FIRE:
@@ -501,6 +520,8 @@ void autoProcess() {
         }
       }
       break;
+    case MISFIRE: //only way to reset misfire is to stop AUTO mode
+      break;
   }
 }
 
@@ -512,6 +533,7 @@ void manualSettings(uint16_t buttons) {
       Serial.println("No buttons pressed");
       OLED("Manual");
       SET_CONTROLRELAYOFF;
+      digitalWrite(TRIGOUT, HIGH);
       break;
     case SW(SWFILL_MASK):
       Serial.println("Filling");
@@ -527,6 +549,7 @@ void manualSettings(uint16_t buttons) {
       Serial.println("Firing");
       OLED("FIRE");
       SET_CONTROLRELAY(FIRERELAY_MASK);
+      digitalWrite(TRIGOUT, LOW);
       break;
     case SW(SWSEQ_MASK):
       Serial.println("Auto Seq");
