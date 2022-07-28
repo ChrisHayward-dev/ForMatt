@@ -13,14 +13,14 @@
 #define PHOTOLEVEL      50
 
 #define NSTACK          5
-#define FILLTIME        15000
-#define PURGETIME       500
-#define FIRETIME        500
+#define FILLTIME        1000
+#define PURGETIME       1500
 #define DEADTIME        2000
 #define MAX_FILLDELAY   15000
-#define MIN_PURGEDELAY  500
+#define MIN_PURGEDELAY  1500
 #define MAXPURGE        20000
-#define FIREDELAY       1000
+#define FIREDELAY       2500
+#define AIRPURGETIME    60000
 
 // Arduino pin definitions
 #define SWUP          5
@@ -98,9 +98,9 @@ astate autoState = IDLE;
 uint16_t  stackLimit = 5;
 uint16_t  num2stack  = 5;
 uint16_t  nextDelay  = 1000;
-uint16_t  fillDelay  = 2000;
-uint16_t  purgeDelay = 1000;
-uint16_t  fillpurgeDelay = 1000;
+uint16_t  fillDelay  = FILLTIME;
+uint16_t  purgeDelay = 3*MIN_PURGEDELAY;
+uint16_t  fillpurgeDelay = MIN_PURGEDELAY;
 uint16_t  readyDelay  = 1000;
 uint16_t  fireDelay  = FIREDELAY;
 
@@ -162,32 +162,33 @@ bool fire() {
   bool      rtn = false;
   bool      gotSpark = false;
   bool      gotPhoto = false;
+  uint32_t  fTime;
   if (PCF.read(SWARM) == HIGH) return (true);
   Serial.println("Firing!");
   SET_CONTROLRELAY(FIRERELAY_MASK);
   delay(20);    //delay long enough for initial pulse to decay
   while ((millis() - startTime) < fireDelay) {
     valSpark = max(analogRead(SPARK), valSpark);
-    valPhoto = max(analogRead(PHOTO), valPhoto);
     count++;
-    if (valSpark > 50) {         //Spark was detected (probably)
-      SET_CONTROLRELAYOFF;
-      digitalWrite(REDLED, HIGH);
-      digitalWrite(GREENLED, HIGH);
+    if ((!rtn) && valSpark > 50) {         //Spark was detected (probably)
       digitalWrite(TRIGOUT, LOW);
-      delay(100);
-      digitalWrite(TRIGOUT, HIGH);
-      digitalWrite(REDLED, LOW);
+      fTime = millis();
+      SET_CONTROLRELAYOFF;
       rtn = true;
-      break;
+    }
+    if (rtn) {
+      valPhoto = max(analogRead(PHOTO), valPhoto);
     }
   }
   SET_CONTROLRELAYOFF;
+  delay(100);
+  digitalWrite(TRIGOUT, HIGH);
   if (!rtn) {
     Serial.println("Misfire!");
   } else {
     Serial.println("Fire Detected!");
   }
+  Serial.print("Delay: "); Serial.println(fTime - startTime);
   Serial.print("Count: "); Serial.println(count);
   Serial.print("Spark: "); Serial.println(valSpark);
   Serial.print("Photo: "); Serial.println(valPhoto);
@@ -335,6 +336,34 @@ void loop() {
       break;
   }
   yield();
+}
+void airPurge() {
+  uint32_t  sTime = millis();
+  uint16_t  switches = SWALL_OFF;
+  Serial.println("Starting Air purge");
+  OLED("AirPurge");
+  SET_CONTROLRELAY(FILLRELAY_MASK | PUMPRELAY_MASK | PURGERELAY_MASK);
+  while((millis() - sTime) < AIRPURGETIME) {
+    if(swChange) {
+      delay(20);
+      if((switches=PCF.readButton16(SWALL_MASK))==0xC0FE) {
+        Serial.println("Switches as expected");
+        swChange = false;
+      } else {
+        Serial.print("Air Purge Cancel:");
+        Serial.println(switches,HEX);
+        Serial.println("Ouch - done");
+        break;
+      }
+    }
+    yield();
+  }
+  if(swChange) {
+    OLED("AP Cancel");
+  } else {
+    OLED("AP done");
+  }
+  SET_CONTROLRELAYOFF;
 }
 
 void programSettings(uint16_t buttons) {
@@ -563,7 +592,7 @@ void manualSettings(uint16_t buttons) {
     case SW(SWAIRPURGE_MASK):
       Serial.println("Air Purge");
       OLED("Air Purge");
-      SET_CONTROLRELAY(FILLRELAY_MASK | PUMPRELAY_MASK | PURGERELAY_MASK);
+      airPurge();
       break;
     case SW(SWFILL_MASK | SWPURGE_MASK):
       Serial.println("Fill & purge");
