@@ -11,16 +11,23 @@
 
 #define SPARKLEVEL      50
 #define PHOTOLEVEL      50
+#define PUMPCAPACITY    385 //mL/min
 
+/* Startup values */
 #define NSTACK          5
-#define FILLTIME        1000
-#define PURGETIME       1500
-#define DEADTIME        2000
-#define MAX_FILLDELAY   15000
-#define MIN_PURGEDELAY  1500
-#define MAXPURGE        20000
-#define FIREDELAY       2500
-#define AIRPURGETIME    60000
+#define PREPURGE_DELAY  4000    // ms  - open purge line long enough to bleed any excess pressure
+#define FILLVOLUME      5       // mL  - miniumum volume to ignite
+#define PURGEVOLUME     10      // mL  - sum the purge volume + fill volume to get gas volume
+#define DEADTIME        2000    // ms  - time to wait before starting fire sequence
+#define MAX_FILLVOLUME  150     // mL  - maximum volume before opening purge (max pickle volume)
+#define MIN_PURGEVOLUME 10      // mL  - needs to be at least 1500 ms
+#define MAX_PURGEVOLUME 150     // mL  - max volume in excess of pickle
+#define READYDELAY      1000    // ms  - delay prior to firing to allow valves to close and settle
+#define FIREDELAY       2500    // ms  - enough time for several sparks even w/ low battery
+#define AIRPURGEVOLUME  1000    // should be serveral times the hose + pickle volume
+#define NEXTDELAY       1000    // ms  - delay to next shot
+
+#define VOL2TIME(x)     (1000L*(x)/(PUMPCAPACITY/60))
 
 // Arduino pin definitions
 #define SWUP          5
@@ -84,6 +91,7 @@
 
 #define OLED(v) {display.clearDisplay();display.setCursor(0,0);display.println(v);display.display();}
 #define OLEDP(v,w){display.clearDisplay();display.setCursor(0,0);display.print(v);display.println(w);display.display();}
+#define OLEDP4(v,w,x,y) {display.clearDisplay();display.setCursor(0,0);display.print(v);display.print(w);display.println(" ");display.print(x);display.println(y);display.display();}
 
 // Library definitions
 #define SCREEN_WIDTH    128     // OLED display width, in pixels
@@ -95,14 +103,14 @@ PCF8575 PCF(0x20);
 
 enum astate {IDLE, INIT, PREPURGE, NEXT, FILL, PURGE, READY, FIRE, MISFIRE};
 astate autoState = IDLE;
-uint16_t  stackLimit = 5;
-uint16_t  num2stack  = 5;
-uint16_t  nextDelay  = 1000;
-uint16_t  fillDelay  = FILLTIME;
-uint16_t  purgeDelay = 3*MIN_PURGEDELAY;
-uint16_t  fillpurgeDelay = MIN_PURGEDELAY;
-uint16_t  readyDelay  = 1000;
-uint16_t  fireDelay  = FIREDELAY;
+uint16_t  stackLimit      = NSTACK;
+uint16_t  num2stack       = NSTACK;
+uint16_t  nextDelay       = NEXTDELAY;
+uint16_t  fillVolume      = FILLVOLUME;
+uint16_t  prePurgeDelay   = PREPURGE_DELAY;
+uint16_t  fillpurgeVolume = MIN_PURGEVOLUME;
+uint16_t  readyDelay      = READYDELAY;
+uint16_t  fireDelay       = FIREDELAY;
 
 volatile bool swChange = false;
 void switchChange() {
@@ -170,7 +178,7 @@ bool fire() {
   while ((millis() - startTime) < fireDelay) {
     valSpark = max(analogRead(SPARK), valSpark);
     count++;
-    if ((!rtn) && valSpark > 50) {         //Spark was detected (probably)
+    if ((valSpark > 50) && (!rtn)) {         //Spark was detected (probably)
       digitalWrite(TRIGOUT, LOW);
       fTime = millis();
       SET_CONTROLRELAYOFF;
@@ -343,7 +351,7 @@ void airPurge() {
   Serial.println("Starting Air purge");
   OLED("AirPurge");
   SET_CONTROLRELAY(FILLRELAY_MASK | PUMPRELAY_MASK | PURGERELAY_MASK);
-  while((millis() - sTime) < AIRPURGETIME) {
+  while((millis() - sTime) < VOL2TIME(AIRPURGEVOLUME)) {
     if(swChange) {
       delay(20);
       if((switches=PCF.readButton16(SWALL_MASK))==0xC0FE) {
@@ -369,40 +377,40 @@ void airPurge() {
 void programSettings(uint16_t buttons) {
   uint16_t prevButtons;
   static uint32_t sTime;
-  static uint16_t reqFillDelay = 0;
+  static uint16_t reqFillVolume = 0;
   static uint16_t prevButton = 0;
-  if (reqFillDelay == 0) {
-    reqFillDelay = fillpurgeDelay + fillDelay;
+  if (reqFillVolume == 0) {
+    reqFillVolume = fillpurgeVolume + fillVolume;
   }
   switch (buttons) {
     case SW(0):
       sTime = millis();
       if (prevButton != buttons) {
-        if (reqFillDelay > MAX_FILLDELAY) {
-          fillpurgeDelay = (reqFillDelay - MAX_FILLDELAY) + MIN_PURGEDELAY;
-          fillDelay  = MAX_FILLDELAY;
+        if (reqFillVolume > (MAX_FILLVOLUME + MIN_PURGEVOLUME)) {
+          fillpurgeVolume = (reqFillVolume - MAX_FILLVOLUME);
+          fillVolume  = MAX_FILLVOLUME;
         } else {
-          fillDelay = reqFillDelay - MIN_PURGEDELAY;
-          fillpurgeDelay = MIN_PURGEDELAY;
+          fillVolume = reqFillVolume - MIN_PURGEVOLUME;
+          fillpurgeVolume = MIN_PURGEVOLUME;
         }
-        OLED("Prog Set");
+        OLEDP4("Stk:",stackLimit," Vol:",reqFillVolume);
       }
       break;
-    case SW(SWFILL_MASK):   // increase Fill time (never more than 150 ml though)
+    case SW(SWFILL_MASK):   // increase Fill (never more than 150 ml though)
       if ((millis() - sTime) > 500) {
         sTime = millis();
-        reqFillDelay += 500;
-        OLEDP("FILL:", reqFillDelay);
+        reqFillVolume += 5;
+        OLEDP("FILL:", reqFillVolume);
       }
       break;
     case SW(SWAIRFILL_MASK):  // decrease Fill time
       if ((millis() - sTime) > 500) {
         sTime = millis();
-        reqFillDelay -= 500;
-        if ( reqFillDelay < MIN_PURGEDELAY ) {
-          reqFillDelay = MIN_PURGEDELAY;
+        reqFillVolume -= 5;
+        if ( reqFillVolume < MIN_PURGEVOLUME ) {
+          reqFillVolume = MIN_PURGEVOLUME;
         }
-        OLEDP("FILL:", reqFillDelay);
+        OLEDP("FILL:", reqFillVolume);
       }
       break;
     case SW(SWPURGE_MASK):
@@ -482,7 +490,7 @@ void autoProcess() {
       SET_CONTROLRELAY(PURGERELAY_MASK);
       break;
     case PREPURGE:
-      if ((millis() - sTime) > purgeDelay) {
+      if ((millis() - sTime) > prePurgeDelay) {
         autoState = NEXT;
         sTime = millis();
         OLED("A Next");
@@ -499,7 +507,7 @@ void autoProcess() {
       }
       break;
     case FILL:
-      if ((millis() - sTime) > fillDelay) {
+      if ((millis() - sTime) > VOL2TIME(fillVolume)) {
         autoState = PURGE;
         sTime = millis();
         OLED("A Purge");
@@ -507,7 +515,7 @@ void autoProcess() {
       }
       break;
     case PURGE:
-      if ((millis() - sTime) > fillpurgeDelay) {
+      if ((millis() - sTime) > VOL2TIME(fillpurgeVolume)) {
         autoState = READY;
         sTime = millis();
         OLED("A Armed");
