@@ -165,7 +165,7 @@ void safeswitch(int sw, int led) {
 bool fire() {
   uint32_t startTime = millis();
   int16_t   valSpark = 0;
-  int16_t   valPhoto = 0;
+  int16_t   valPhoto = 32767;
   int       count = 0;
   bool      rtn = false;
   bool      gotSpark = false;
@@ -185,7 +185,7 @@ bool fire() {
       rtn = true;
     }
     if (rtn) {
-      valPhoto = max(analogRead(PHOTO), valPhoto);
+      valPhoto = min(analogRead(PHOTO), valPhoto);
     }
   }
   SET_CONTROLRELAYOFF;
