@@ -3,6 +3,9 @@
 */
 #include <PCF8575.h>
 #include <Wire.h>
+#include <SPI.h>
+#include <SdFat.h>
+#include <sdios.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 /* Pickle options */
@@ -93,6 +96,9 @@
 #define OLEDP(v,w){display.clearDisplay();display.setCursor(0,0);display.print(v);display.println(w);display.display();}
 #define OLEDP4(v,w,x,y) {display.clearDisplay();display.setCursor(0,0);display.print(v);display.print(w);display.println(" ");display.print(x);display.println(y);display.display();}
 
+#define MAXBUFR 132
+char bufr[MAXBUFR];
+
 // Library definitions
 #define SCREEN_WIDTH    128     // OLED display width, in pixels
 #define SCREEN_HEIGHT   32     // OLED display height, in pixels
@@ -100,6 +106,14 @@
 #define SCREEN_ADDRESS  0x3C  ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 PCF8575 PCF(0x20);
+
+//SDFAT defs
+#define SPI_SPEED SD_SCK_MHZ(4)
+SdFs sd;
+FsFile  file;
+#define SD_CS 4
+
+char fileName[] = "pickle000.txt";
 
 enum astate {IDLE, INIT, PREPURGE, NEXT, FILL, PURGE, READY, FIRE, MISFIRE};
 astate autoState = IDLE;
@@ -111,6 +125,16 @@ uint16_t  prePurgeDelay   = PREPURGE_DELAY;
 uint16_t  fillpurgeVolume = MIN_PURGEVOLUME;
 uint16_t  readyDelay      = READYDELAY;
 uint16_t  fireDelay       = FIREDELAY;
+
+#ifdef DEBUG
+#define   DPRINT(...)       Serial.print(__VA_ARGS__)
+#define   DPRINTLN(...)     Serial.println(__VA_ARGS__)
+#else
+#define   DPRINT(...)
+#define   DPRINTLN(...)
+#endif
+
+ArduinoOutStream  cout(Serial);
 
 volatile bool swChange = false;
 void switchChange() {
@@ -167,24 +191,33 @@ bool fire() {
   int16_t   valSpark = 0;
   int16_t   valPhoto = 32767;
   int       count = 0;
+  int       pcount = 0;
+  int       peakcount = 0;
   bool      rtn = false;
   bool      gotSpark = false;
   bool      gotPhoto = false;
   uint32_t  fTime;
   if (PCF.read(SWARM) == HIGH) return (true);
-  Serial.println("Firing!");
+  DPRINTLN("Firing!");
   SET_CONTROLRELAY(FIRERELAY_MASK);
   delay(20);    //delay long enough for initial pulse to decay
   while ((millis() - startTime) < fireDelay) {
     valSpark = max(analogRead(SPARK), valSpark);
-    count++;
     if ((valSpark > 50) && (!rtn)) {         //Spark was detected (probably)
       digitalWrite(TRIGOUT, LOW);
       fTime = millis();
       SET_CONTROLRELAYOFF;
       rtn = true;
+    } else {
+      count++;
     }
     if (rtn) {
+      int16_t v;
+      pcount++;
+      if ((v = analogRead(PHOTO)) < valPhoto) {
+        valPhoto = v;
+        peakcount = pcount;
+      }
       valPhoto = min(analogRead(PHOTO), valPhoto);
     }
   }
@@ -192,18 +225,19 @@ bool fire() {
   delay(100);
   digitalWrite(TRIGOUT, HIGH);
   if (!rtn) {
-    Serial.println("Misfire!");
+    DPRINTLN("Misfire!");
   } else {
-    Serial.println("Fire Detected!");
+    DPRINTLN("Fire Detected!");
   }
-  Serial.print("Delay: "); Serial.println(fTime - startTime);
-  Serial.print("Count: "); Serial.println(count);
-  Serial.print("Spark: "); Serial.println(valSpark);
-  Serial.print("Photo: "); Serial.println(valPhoto);
+  snprintf(bufr, MAXBUFR, "%d,Auto Fire,%d,ms,%d,delay,%d,count,%d,spark,%d,photo,%d,pcount\n", millis(), fTime, fTime-startTime,count, valSpark, valPhoto, peakcount);
+  Serial.print(bufr);
+  file.print(bufr);file.sync();
+  DPRINT("Delay: "); DPRINTLN(fTime - startTime);
+  DPRINT("Count: "); DPRINTLN(count);
+  DPRINT("Spark: "); DPRINTLN(valSpark);
+  DPRINT("Photo: "); DPRINTLN(valPhoto);
   return (rtn);
 }
-
-
 
 void setup() {
   uint32_t startTime = millis();
@@ -234,6 +268,7 @@ void setup() {
   Serial.println(__DATE__);
   Serial.println(__TIME__);
 
+
   if (!PCF.begin()) {  // setup the PCF I2C port expander
     Serial.println("Unable to init PCF");
     errorStop(1);
@@ -256,12 +291,40 @@ void setup() {
     display.println("Pickle");
     display.display();
   }
+
+  // Open the SD file for write
+  if (!sd.begin(SD_CS, SPI_SPEED)) {
+    if (sd.card()->errorCode()) {
+      cout << F(
+             "\nSD initialization failed.\n"
+             "Do not reformat the card!\n"
+             "Is the card correctly inserted?\n"
+             "Is chipSelect set to the correct value?\n"
+             "Does another SPI device need to be disabled?\n"
+             "Is there a wiring/soldering problem?\n");
+      cout << F("\nerrorCode: ") << hex << showbase;
+      cout << int(sd.card()->errorCode());
+      cout << F(", errorData: ") << int(sd.card()->errorData());
+      cout << dec << noshowbase << endl;
+      OLED("SD error");
+      errorStop(4);
+    }
+  }
+  Serial.println("SD card ok");
+  if (!file.open(fileName, O_CREAT | O_APPEND | O_SYNC | O_WRITE)) {
+    OLED("SD open");
+    errorStop(5);
+  }
+  file.println("Pickle Start");
   safeswitch(SWARM, ARMLED);
   safeswitch(SWAUTO, AUTOLED);
-  Serial.println("Starting Switch Interrupt");
+  DPRINTLN("Starting Switch Interrupt");
   Serial.println(__FILE__);
   Serial.println(__DATE__);
   Serial.println(__TIME__);
+  snprintf(bufr, MAXBUFR, "Pickle Control: %s %s %s\n", __FILE__, __DATE__, __TIME__);
+  Serial.print(bufr);
+  file.print(bufr);file.sync();
 
   attachInterrupt(digitalPinToInterrupt(PCF_INTERRUPT), switchChange, FALLING); // setup the switch detect interrupt
   digitalWrite(GREENLED, HIGH);
@@ -281,8 +344,8 @@ void loop() {
     delay(10);
     swChange = false;
     switches = PCF.readButton16(SWALL_MASK);
-    Serial.print("Switch Change:");
-    Serial.println(switches, HEX);
+    DPRINT("Switch Change:");
+    DPRINTLN(switches, HEX);
     toggles = switches & (SWARM_MASK | SWAUTO_MASK);
     if (toggles != prevToggles) {
       prevToggles = toggles;
@@ -290,28 +353,28 @@ void loop() {
       display.clearDisplay();
       switch (toggles) {
         case (SWARM_MASK | SWAUTO_MASK):
-          Serial.println("All off");
+          DPRINTLN("All off");
           set16(RELAYALL_MASK, RELAYALL_MASK);
           primaryState = PROG;
           autoState = IDLE;
           OLED("Program");
           break;
         case SWARM_MASK:
-          Serial.println("Auto on");
+          DPRINTLN("Auto on");
           set16(RELAYALL_MASK, RELAYALL_MASK );
           primaryState = STANDBY;
           autoState = IDLE;
           OLED("Standby");
           break;
         case SWAUTO_MASK:
-          Serial.println("Armed");
+          DPRINTLN("Armed");
           set16(RELAYALL_MASK, RELAYALL_MASK & ~ARMRELAY_MASK & ~ARMLED_MASK);
           primaryState = MANUAL;
           OLED("Rdy Manual");
           autoState = IDLE;
           break;
         case 0:
-          Serial.println("Armed in Auto");
+          DPRINTLN("Armed in Auto");
           set16(RELAYALL_MASK, RELAYALL_MASK & ~(ARMRELAY_MASK | ARMLED_MASK ));
           primaryState = AUTO;
           OLED("Rdy Auto");
@@ -319,8 +382,8 @@ void loop() {
       }
     }
     buttons = switches & SWBUTTONS_MASK;
-    Serial.print("Buttons:");
-    Serial.println(buttons, HEX);
+    DPRINT("Buttons:");
+    DPRINTLN(buttons, HEX);
     switch (primaryState) {
       case PROG:
         programSettings(buttons);
@@ -348,30 +411,33 @@ void loop() {
 void airPurge() {
   uint32_t  sTime = millis();
   uint16_t  switches = SWALL_OFF;
-  Serial.println("Starting Air purge");
+  DPRINTLN("Starting Air purge");
   OLED("AirPurge");
   SET_CONTROLRELAY(FILLRELAY_MASK | PUMPRELAY_MASK | PURGERELAY_MASK);
-  while((millis() - sTime) < VOL2TIME(AIRPURGEVOLUME)) {
-    if(swChange) {
+  while ((millis() - sTime) < VOL2TIME(AIRPURGEVOLUME)) {
+    if (swChange) {
       delay(20);
-      if((switches=PCF.readButton16(SWALL_MASK))==0xC0FE) {
-        Serial.println("Switches as expected");
+      if ((switches = PCF.readButton16(SWALL_MASK)) == 0xC0FE) {
+        DPRINTLN("Switches as expected");
         swChange = false;
       } else {
-        Serial.print("Air Purge Cancel:");
-        Serial.println(switches,HEX);
-        Serial.println("Ouch - done");
+        DPRINT("Air Purge Cancel:");
+        DPRINTLN(switches, HEX);
+        DPRINTLN("Ouch - done");
         break;
       }
     }
     yield();
   }
-  if(swChange) {
+  if (swChange) {
     OLED("AP Cancel");
   } else {
     OLED("AP done");
   }
   SET_CONTROLRELAYOFF;
+  snprintf(bufr, MAXBUFR, "%d,AirPurge,%d,ms\n", millis(), millis() - sTime);
+  Serial.print(bufr);
+  file.print(bufr);file.sync();
 }
 
 void programSettings(uint16_t buttons) {
@@ -393,7 +459,10 @@ void programSettings(uint16_t buttons) {
           fillVolume = reqFillVolume - MIN_PURGEVOLUME;
           fillpurgeVolume = MIN_PURGEVOLUME;
         }
-        OLEDP4("Stk:",stackLimit," Vol:",reqFillVolume);
+        OLEDP4("Stk:", stackLimit, " Vol:", reqFillVolume);
+        snprintf(bufr, MAXBUFR, "%d,Program,%d,stacks,%d,mL fill\n", millis(), stackLimit, reqFillVolume);
+        Serial.print(bufr);
+        file.print(bufr);file.sync();
       }
       break;
     case SW(SWFILL_MASK):   // increase Fill (never more than 150 ml though)
@@ -439,11 +508,11 @@ void autoSettings(uint16_t buttons) {
       if (autoState == IDLE) {
         autoState = INIT;
         num2stack = stackLimit;
-        Serial.println("Init Seq");
+        DPRINTLN("Init Seq");
       } else {
         autoState = IDLE;
         SET_CONTROLRELAYOFF;
-        Serial.println("Cancel Seq");
+        DPRINTLN("Cancel Seq");
         OLED("Ready");
       }
       break;
@@ -455,7 +524,7 @@ void autoSettings(uint16_t buttons) {
       } else {
         autoState = IDLE;
         SET_CONTROLRELAYOFF;
-        Serial.println("Cancel Seq");
+        DPRINTLN("Cancel Seq");
         OLED("Ready");
       }
       break;
@@ -524,6 +593,8 @@ void autoProcess() {
       break;
     case READY:
       if ((millis() - sTime) > readyDelay) {
+        snprintf(bufr, MAXBUFR, "%d,Auto Firing,%d,stacked,%d,fill,%d,purge,%d,delay\n", millis(), nStacked, fillVolume, fillpurgeVolume, fireDelay);
+        file.print(bufr);file.sync();
         autoState = FIRE;
         sTime = millis();
         OLED("A Fire");
@@ -532,7 +603,7 @@ void autoProcess() {
 #else
         if (!fire()) {
           OLED("MisFire");
-          Serial.println("MisFire!");
+          DPRINTLN("MisFire!");
           autoState = MISFIRE;
           SET_CONTROLRELAYOFF;
         }
@@ -567,50 +638,70 @@ void manualSettings(uint16_t buttons) {
   display.clearDisplay();
   switch (buttons) {
     case SW(0):
-      Serial.println("No buttons pressed");
+      DPRINTLN("No buttons pressed");
       OLED("Manual");
       SET_CONTROLRELAYOFF;
       digitalWrite(TRIGOUT, HIGH);
+      snprintf(bufr, MAXBUFR, "%d,Manual,Idle\n", millis());
+      Serial.print(bufr);
+      file.print(bufr);file.sync();
       break;
     case SW(SWFILL_MASK):
-      Serial.println("Filling");
+      DPRINTLN("Filling");
       OLED("FILL");
       SET_CONTROLRELAY(VALVERELAY_MASK | FILLRELAY_MASK | PUMPRELAY_MASK);
+      snprintf(bufr, MAXBUFR, "%d,Manual,Fill\n", millis());
+      Serial.print(bufr);
+      file.print(bufr);file.sync();
       break;
     case SW(SWPURGE_MASK):
-      Serial.println("Purging");
+      DPRINTLN("Purging");
       OLED("PURGE");
       SET_CONTROLRELAY(PURGERELAY_MASK);
+      snprintf(bufr, MAXBUFR, "%d,Manual,Purge\n", millis());
+      Serial.print(bufr);
+      file.print(bufr);file.sync();
       break;
     case SW(SWFIRE_MASK):
-      Serial.println("Firing");
+      DPRINTLN("Firing");
       OLED("FIRE");
       SET_CONTROLRELAY(FIRERELAY_MASK);
       digitalWrite(TRIGOUT, LOW);
+      snprintf(bufr, MAXBUFR, "%d,Manual,Fire\n", millis());
+      Serial.print(bufr);
+      file.print(bufr);file.sync();
       break;
     case SW(SWSEQ_MASK):
-      Serial.println("Auto Seq");
+      DPRINTLN("Auto Seq");
       OLED("SEQ");
       break;
     case SW(SWAIRFILL_MASK):
-      Serial.println("Air Fill");
+      DPRINTLN("Air Fill");
       OLED("Air Fill");
       SET_CONTROLRELAY(FILLRELAY_MASK | PUMPRELAY_MASK);
+      snprintf(bufr, MAXBUFR, "%d,Manual,AirFill\n", millis());
+      Serial.print(bufr);
+      file.print(bufr);file.sync();
       break;
     case SW(SWAIRPURGE_MASK):
-      Serial.println("Air Purge");
+      DPRINTLN("Air Purge");
       OLED("Air Purge");
       airPurge();
       break;
     case SW(SWFILL_MASK | SWPURGE_MASK):
-      Serial.println("Fill & purge");
+      DPRINTLN("Fill & purge");
       OLED("Fill+Pur");
       SET_CONTROLRELAY(VALVERELAY_MASK | FILLRELAY_MASK | PUMPRELAY_MASK | PURGERELAY_MASK);
+      snprintf(bufr, MAXBUFR, "%d,Manual,Fill+Purge\n", millis());
+      Serial.print(bufr);
+      file.print(bufr);file.sync();
       break;
     case SW(SWAIRFILL_MASK | SWAIRPURGE_MASK):
-      Serial.println("Air fill & purge");
+      DPRINTLN("Air fill & purge");
       OLED("Air FP");
       SET_CONTROLRELAY(PURGERELAY_MASK | FILLRELAY_MASK | PUMPRELAY_MASK);
+      snprintf(bufr, MAXBUFR, "%d,Manual,Air Fill+Purge\n", millis());
+      file.print(bufr);file.sync();
       break;
     default:
       Serial.println("Unknown state");
