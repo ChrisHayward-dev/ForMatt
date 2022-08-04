@@ -14,7 +14,7 @@
 
 #define SPARKLEVEL      50
 #define PHOTOLEVEL      50
-#define PUMPCAPACITY    385 //mL/min
+#define PUMPCAPACITY    462 //mL/min
 
 /* Startup values */
 #define NSTACK          5
