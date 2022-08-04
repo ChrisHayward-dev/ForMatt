@@ -29,8 +29,12 @@
 #define FIREDELAY       2500    // ms  - enough time for several sparks even w/ low battery
 #define AIRPURGEVOLUME  1000    // should be serveral times the hose + pickle volume
 #define NEXTDELAY       1000    // ms  - delay to next shot
+#define POFFSET         99      // supply pressure reading at 0 psi
+#define P23VALUE        744     // supply pressure reading at 23 psi
 
-#define VOL2TIME(x)     (1000L*(x)/(PUMPCAPACITY/60))
+#define TIME2VOL(x,p)     ((float)((x)/1000.0)*(p/14.7)*PUMPCAPACITY/60.0)    // time in ms, absolute pressure in PSI
+#define VOL2TIME(x,p)     (1000L*(x)/((p*PUMPCAPACITY/60/14.7)))
+#define PRESSURE(x)       (14.7+(23.0*((float)(x)-POFFSET))/(P23VALUE-POFFSET))   // analog to absolute pressure reading
 
 // Arduino pin definitions
 #define SWUP          5
@@ -41,6 +45,7 @@
 #define TRIGOUT       11
 #define PCF_INTERRUPT 12
 #define REDLED        13
+#define SUPPLYPRESSURE A3
 #define SPARK         A2
 #define PHOTO         A1
 
@@ -197,6 +202,7 @@ bool fire() {
   bool      gotSpark = false;
   bool      gotPhoto = false;
   uint32_t  fTime;
+  float     pressure = 0;
   if (PCF.read(SWARM) == HIGH) return (true);
   DPRINTLN("Firing!");
   SET_CONTROLRELAY(FIRERELAY_MASK);
@@ -229,9 +235,10 @@ bool fire() {
   } else {
     DPRINTLN("Fire Detected!");
   }
-  snprintf(bufr, MAXBUFR, "%d,Auto Fire,%d,ms,%d,delay,%d,count,%d,spark,%d,photo,%d,pcount\n", millis(), fTime, fTime-startTime,count, valSpark, valPhoto, peakcount);
+  pressure = PRESSURE(analogRead(SUPPLYPRESSURE)) - 15;
+  snprintf(bufr, MAXBUFR, "%d,Auto Fire,%d,ms,%d,ms delay,%d,count,%d,spark,%d,photo,%d,pcount,%d,psi pressure\n", millis(), fTime, fTime - startTime, count, valSpark, valPhoto, peakcount, (long)pressure);
   Serial.print(bufr);
-  file.print(bufr);file.sync();
+  file.print(bufr); file.sync();
   DPRINT("Delay: "); DPRINTLN(fTime - startTime);
   DPRINT("Count: "); DPRINTLN(count);
   DPRINT("Spark: "); DPRINTLN(valSpark);
@@ -267,7 +274,6 @@ void setup() {
   Serial.println(__FILE__);
   Serial.println(__DATE__);
   Serial.println(__TIME__);
-
 
   if (!PCF.begin()) {  // setup the PCF I2C port expander
     Serial.println("Unable to init PCF");
@@ -324,7 +330,7 @@ void setup() {
   Serial.println(__TIME__);
   snprintf(bufr, MAXBUFR, "Pickle Control: %s %s %s\n", __FILE__, __DATE__, __TIME__);
   Serial.print(bufr);
-  file.print(bufr);file.sync();
+  file.print(bufr); file.sync();
 
   attachInterrupt(digitalPinToInterrupt(PCF_INTERRUPT), switchChange, FALLING); // setup the switch detect interrupt
   digitalWrite(GREENLED, HIGH);
@@ -414,7 +420,7 @@ void airPurge() {
   DPRINTLN("Starting Air purge");
   OLED("AirPurge");
   SET_CONTROLRELAY(FILLRELAY_MASK | PUMPRELAY_MASK | PURGERELAY_MASK);
-  while ((millis() - sTime) < VOL2TIME(AIRPURGEVOLUME)) {
+  while ((millis() - sTime) < VOL2TIME(AIRPURGEVOLUME, 15)) {
     if (swChange) {
       delay(20);
       if ((switches = PCF.readButton16(SWALL_MASK)) == 0xC0FE) {
@@ -437,7 +443,7 @@ void airPurge() {
   SET_CONTROLRELAYOFF;
   snprintf(bufr, MAXBUFR, "%d,AirPurge,%d,ms\n", millis(), millis() - sTime);
   Serial.print(bufr);
-  file.print(bufr);file.sync();
+  file.print(bufr); file.sync();
 }
 
 void programSettings(uint16_t buttons) {
@@ -462,7 +468,7 @@ void programSettings(uint16_t buttons) {
         OLEDP4("Stk:", stackLimit, " Vol:", reqFillVolume);
         snprintf(bufr, MAXBUFR, "%d,Program,%d,stacks,%d,mL fill\n", millis(), stackLimit, reqFillVolume);
         Serial.print(bufr);
-        file.print(bufr);file.sync();
+        file.print(bufr); file.sync();
       }
       break;
     case SW(SWFILL_MASK):   // increase Fill (never more than 150 ml though)
@@ -539,8 +545,12 @@ void autoSettings(uint16_t buttons) {
 
 void autoProcess() {
   static uint32_t sTime = 0;
+  static uint32_t fTime = 0;
   static uint16_t nStacked = 0;
   static astate prevState;
+  static float volFilled = 0;
+  float  pressure = 0;
+  uint32_t  analog = 0;
   prevState = autoState;
   switch (autoState) {
     case IDLE:
@@ -570,21 +580,40 @@ void autoProcess() {
       if ((millis() - sTime) > nextDelay) {
         autoState = FILL;
         nStacked++;
-        sTime = millis();
+        fTime = sTime = millis();
         OLED("A Fill");
+        volFilled = 0;
         SET_CONTROLRELAY(FILLRELAY_MASK | PUMPRELAY_MASK | VALVERELAY_MASK);
       }
       break;
     case FILL:
-      if ((millis() - sTime) > VOL2TIME(fillVolume)) {
+    analog = 0;
+      for (int k = 0; k < 10; k++) {
+        analog += analogRead(SUPPLYPRESSURE);
+      }
+      pressure = PRESSURE(analog/10);
+      volFilled += TIME2VOL(millis() - fTime, pressure);
+      fTime = millis();
+      if (volFilled >= fillVolume) {
+        Serial.print("Fill Time:"); Serial.print(millis() - sTime); Serial.print(" Pressure:"); Serial.println(pressure);
         autoState = PURGE;
-        sTime = millis();
+        fTime = sTime = millis();
+        volFilled = 0;
         OLED("A Purge");
+
         SET_CONTROLRELAY(FILLRELAY_MASK | PUMPRELAY_MASK | VALVERELAY_MASK | PURGERELAY_MASK);
       }
       break;
     case PURGE:
-      if ((millis() - sTime) > VOL2TIME(fillpurgeVolume)) {
+    analog = 0;
+      for (int k = 0; k < 10; k++) {
+        analog += analogRead(SUPPLYPRESSURE);
+      }
+      pressure = PRESSURE(analog/10);
+      volFilled += TIME2VOL(millis() - fTime, pressure);
+      fTime = millis();
+      if (volFilled >= fillpurgeVolume) {
+        Serial.print("Fill Time:"); Serial.print(millis() - sTime); Serial.print(" Pressure:"); Serial.println(pressure);
         autoState = READY;
         sTime = millis();
         OLED("A Armed");
@@ -593,8 +622,8 @@ void autoProcess() {
       break;
     case READY:
       if ((millis() - sTime) > readyDelay) {
-        snprintf(bufr, MAXBUFR, "%d,Auto Firing,%d,stacked,%d,fill,%d,purge,%d,delay\n", millis(), nStacked, fillVolume, fillpurgeVolume, fireDelay);
-        file.print(bufr);file.sync();
+        snprintf(bufr, MAXBUFR, "%d,Auto Firing,%d,stacked,%d,fill,%d,purge,%d,delay,%d,pressure\n", millis(), nStacked, fillVolume, fillpurgeVolume, fireDelay, (long)pressure);
+        file.print(bufr); file.sync();
         autoState = FIRE;
         sTime = millis();
         OLED("A Fire");
@@ -644,7 +673,7 @@ void manualSettings(uint16_t buttons) {
       digitalWrite(TRIGOUT, HIGH);
       snprintf(bufr, MAXBUFR, "%d,Manual,Idle\n", millis());
       Serial.print(bufr);
-      file.print(bufr);file.sync();
+      file.print(bufr); file.sync();
       break;
     case SW(SWFILL_MASK):
       DPRINTLN("Filling");
@@ -652,7 +681,7 @@ void manualSettings(uint16_t buttons) {
       SET_CONTROLRELAY(VALVERELAY_MASK | FILLRELAY_MASK | PUMPRELAY_MASK);
       snprintf(bufr, MAXBUFR, "%d,Manual,Fill\n", millis());
       Serial.print(bufr);
-      file.print(bufr);file.sync();
+      file.print(bufr); file.sync();
       break;
     case SW(SWPURGE_MASK):
       DPRINTLN("Purging");
@@ -660,7 +689,7 @@ void manualSettings(uint16_t buttons) {
       SET_CONTROLRELAY(PURGERELAY_MASK);
       snprintf(bufr, MAXBUFR, "%d,Manual,Purge\n", millis());
       Serial.print(bufr);
-      file.print(bufr);file.sync();
+      file.print(bufr); file.sync();
       break;
     case SW(SWFIRE_MASK):
       DPRINTLN("Firing");
@@ -669,7 +698,7 @@ void manualSettings(uint16_t buttons) {
       digitalWrite(TRIGOUT, LOW);
       snprintf(bufr, MAXBUFR, "%d,Manual,Fire\n", millis());
       Serial.print(bufr);
-      file.print(bufr);file.sync();
+      file.print(bufr); file.sync();
       break;
     case SW(SWSEQ_MASK):
       DPRINTLN("Auto Seq");
@@ -681,7 +710,7 @@ void manualSettings(uint16_t buttons) {
       SET_CONTROLRELAY(FILLRELAY_MASK | PUMPRELAY_MASK);
       snprintf(bufr, MAXBUFR, "%d,Manual,AirFill\n", millis());
       Serial.print(bufr);
-      file.print(bufr);file.sync();
+      file.print(bufr); file.sync();
       break;
     case SW(SWAIRPURGE_MASK):
       DPRINTLN("Air Purge");
@@ -694,14 +723,14 @@ void manualSettings(uint16_t buttons) {
       SET_CONTROLRELAY(VALVERELAY_MASK | FILLRELAY_MASK | PUMPRELAY_MASK | PURGERELAY_MASK);
       snprintf(bufr, MAXBUFR, "%d,Manual,Fill+Purge\n", millis());
       Serial.print(bufr);
-      file.print(bufr);file.sync();
+      file.print(bufr); file.sync();
       break;
     case SW(SWAIRFILL_MASK | SWAIRPURGE_MASK):
       DPRINTLN("Air fill & purge");
       OLED("Air FP");
       SET_CONTROLRELAY(PURGERELAY_MASK | FILLRELAY_MASK | PUMPRELAY_MASK);
       snprintf(bufr, MAXBUFR, "%d,Manual,Air Fill+Purge\n", millis());
-      file.print(bufr);file.sync();
+      file.print(bufr); file.sync();
       break;
     default:
       Serial.println("Unknown state");
