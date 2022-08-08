@@ -14,7 +14,7 @@
 
 #define SPARKLEVEL      50
 #define PHOTOLEVEL      50
-#define PUMPCAPACITY    462 //mL/min
+#define PUMPCAPACITY    630 //mL/min
 
 /* Startup values */
 #define NSTACK          5
@@ -130,6 +130,7 @@ uint16_t  prePurgeDelay   = PREPURGE_DELAY;
 uint16_t  fillpurgeVolume = MIN_PURGEVOLUME;
 uint16_t  readyDelay      = READYDELAY;
 uint16_t  fireDelay       = FIREDELAY;
+uint16_t  pOffset = 0;  //pressure offset
 
 #ifdef DEBUG
 #define   DPRINT(...)       Serial.print(__VA_ARGS__)
@@ -267,7 +268,7 @@ void setup() {
       digitalWrite(REDLED, !digitalRead(REDLED));
     }
     yield();
-    if (millis() - startTime > 10000) break;
+    if (millis() - startTime > 100000) break;
   }
 #endif
   Serial.println("Starting Pickel Controller");
@@ -296,6 +297,12 @@ void setup() {
     display.setTextColor(SSD1306_WHITE);
     display.println("Pickle");
     display.display();
+
+    uint32_t pOffset = 0;
+    for(int k=0;k<100;k++) {
+      pOffset += analogRead(SUPPLYPRESSURE);
+    }
+    Serial.print("Pressure Offset:");Serial.println(pOffset/100);
   }
 
   // Open the SD file for write
